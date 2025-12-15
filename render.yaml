@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: impulse-response-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python api.py
