@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Impulse Response Averaging (WAV Upload)</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      background: #0f172a;
+      color: #e5e7eb;
+      padding: 2rem;
+      max-width: 900px;
+      margin: auto;
+    }
+    h1, h2 { color: #38bdf8; }
+    .card {
+      background: #020617;
+      padding: 1.5rem;
+      border-radius: 1rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+    }
+    input, button {
+      margin-top: 1rem;
+    }
+    button {
+      background: #38bdf8;
+      color: #020617;
+      border: none;
+      padding: 0.6rem 1.2rem;
+      border-radius: 0.6rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    pre {
+      background: #020617;
+      padding: 1rem;
+      border-radius: 0.75rem;
+      overflow-x: auto;
+    }
+    .note {
+      background: #1e293b;
+      border-left: 4px solid #38bdf8;
+      padding: 1rem;
+      margin-top: 1rem;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Impulse Response Averaging (Browser-Based)</h1>
+
+<div class="card">
+  <h2>1. Upload WAV Files</h2>
+  <p>Select a reference signal and multiple recorded responses.</p>
+
+  <label>Reference Signal (Test Sound)</label><br />
+  <input type="file" id="refFile" accept=".wav" />
+
+  <br /><br />
+
+  <label>Recorded WAV Files (multiple)</label><br />
+  <input type="file" id="recFiles" accept=".wav" multiple />
+
+  <br /><br />
+
+  <button id="processBtn" disabled>Estimate Averaged IR</button>
+</div>
+
+<div class="card">
+  <h2>2. Status</h2>
+  <pre id="log">Waiting for files...</pre>
+</div>
+
+<div class="card">
+  <h2>3. Waveform Preview</h2>
+  <canvas id="waveform" width="800" height="200" style="width:100%;background:#020617;border-radius:0.75rem"></canvas>
+</div>
+
+<div class="note">
+  <strong>Note:</strong> This runs entirely in your browser using the Web Audio API.
+  No files are uploaded to a server.
+</div>
+
+<script>
+const refInput = document.getElementById('refFile');
+const recInput = document.getElementById('recFiles');
+const processBtn = document.getElementById('processBtn');
+const log = document.getElementById('log');
+
+let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function logMsg(msg) {
+  log.textContent += `\n${msg}`;
+}
+
+function filesReady() {
+  return refInput.files.length === 1 && recInput.files.length > 0;
+}
+
+refInput.onchange = recInput.onchange = () => {
+  processBtn.disabled = !filesReady();
+};
+
+async function decodeWav(file) {
+  const buffer = await file.arrayBuffer();
+  const audio = await audioCtx.decodeAudioData(buffer);
+  return audio.getChannelData(0);
+}
+
+function averageSignals(signals) {
+  const minLen = Math.min(...signals.map(s => s.length));
+  const avg = new Float32Array(minLen);
+
+  for (let i = 0; i < minLen; i++) {
+    let sum = 0;
+    for (let s of signals) sum += s[i];
+    avg[i] = sum / signals.length;
+  }
+  return avg;
+}
+
+processBtn.onclick = async () => {
+  log.textContent = 'Decoding WAV files...';
+
+  const ref = await decodeWav(refInput.files[0]);
+  logMsg('Reference loaded');
+
+  const recordings = [];
+  for (const file of recInput.files) {
+    recordings.push(await decodeWav(file));
+    logMsg(`Loaded ${file.name}`);
+  }
+
+  logMsg('Averaging recordings (time-aligned assumption)...');
+  const avg = averageSignals(recordings);
+
+  logMsg(`Averaged signal length: ${avg.length} samples`);
+  logMsg('IR estimation via FFT is typically done server-side or with DSP libraries.');
+  logMsg('This demo focuses on upload + averaging pipeline.');
+
+  logMsg('Encoding averaged WAV for download...');
+
+  // Encode WAV (16-bit PCM)
+  function encodeWAV(samples, sampleRate = audioCtx.sampleRate) {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+
+    function writeString(view, offset, string) {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    }
+
+    let offset = 0;
+    writeString(view, offset, 'RIFF'); offset += 4;
+    view.setUint32(offset, 36 + samples.length * 2, true); offset += 4;
+    writeString(view, offset, 'WAVE'); offset += 4;
+    writeString(view, offset, 'fmt '); offset += 4;
+    view.setUint32(offset, 16, true); offset += 4;
+    view.setUint16(offset, 1, true); offset += 2;
+    view.setUint16(offset, 1, true); offset += 2;
+    view.setUint32(offset, sampleRate, true); offset += 4;
+    view.setUint32(offset, sampleRate * 2, true); offset += 4;
+    view.setUint16(offset, 2, true); offset += 2;
+    view.setUint16(offset, 16, true); offset += 2;
+    writeString(view, offset, 'data'); offset += 4;
+    view.setUint32(offset, samples.length * 2, true); offset += 4;
+
+    for (let i = 0; i < samples.length; i++, offset += 2) {
+      let s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+
+    return new Blob([view], { type: 'audio/wav' });
+  }
+
+  // Draw waveform
+  function drawWaveform(samples) {
+    const canvas = document.getElementById('waveform');
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+
+    const step = Math.ceil(samples.length / canvas.width);
+    const mid = canvas.height / 2;
+
+    for (let x = 0; x < canvas.width; x++) {
+      const start = x * step;
+      let min = 1.0, max = -1.0;
+      for (let i = 0; i < step && start + i < samples.length; i++) {
+        const v = samples[start + i];
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+      ctx.moveTo(x, mid + min * mid);
+      ctx.lineTo(x, mid + max * mid);
+    }
+    ctx.stroke();
+  }
+
+  drawWaveform(avg);
+
+  const wavBlob = encodeWAV(avg);
+  const url = URL.createObjectURL(wavBlob);
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'impulse_response.wav';
+  link.textContent = 'Download Impulse Response WAV';
+  link.style.display = 'inline-block';
+  link.style.marginTop = '1rem';
+  link.style.color = '#38bdf8';
+
+  log.parentElement.appendChild(link);
+  logMsg('Done ✅');
+};
+</script>
+
+</body>
+</html>
