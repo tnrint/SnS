@@ -26,5 +26,5 @@ def process():
     return send_file(out, as_attachment=True)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5500))  # Use Render's assigned port
+    port = int(os.environ.get("PORT", 10000))  # Use Render's assigned port
     app.run(host="0.0.0.0", port=port)
