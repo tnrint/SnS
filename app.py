@@ -5,6 +5,8 @@ from Averaging_IR import estimate_ir
 app = Flask(__name__)
 
 @app.route("/process", methods=["POST"])
+def index():
+    return "Impulse Response Backend is running!"
 def process():
     ref = request.files["ref"]
     recs = request.files.getlist("recs")
