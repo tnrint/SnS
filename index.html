@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Impulse Response Averaging</title>
+
+  <style>
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      background: #0f172a;
+      color: #e5e7eb;
+      padding: 2rem;
+      max-width: 900px;
+      margin: auto;
+    }
+    h1, h2 { color: #38bdf8; }
+    .card {
+      background: #020617;
+      padding: 1.5rem;
+      border-radius: 1rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+    }
+    input, button {
+      margin-top: 1rem;
+    }
+    button {
+      background: #38bdf8;
+      color: #020617;
+      border: none;
+      padding: 0.6rem 1.2rem;
+      border-radius: 0.6rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    pre {
+      background: #020617;
+      padding: 1rem;
+      border-radius: 0.75rem;
+      overflow-x: auto;
+    }
+    canvas {
+      width: 100%;
+      background: #020617;
+      border-radius: 0.75rem;
+    }
+    .note {
+      background: #1e293b;
+      border-left: 4px solid #38bdf8;
+      padding: 1rem;
+      margin-top: 1rem;
+    }
+  </style>
+</head>
+
+<body>
+
+<h1>Room Impulse Response Averaging</h1>
+
+<div class="card">
+  <h2>1. Upload WAV Files</h2>
+
+  <label>Reference Signal (Test Sound)</label><br />
+  <input type="file" id="refFile" accept=".wav" />
+
+  <br /><br />
+
+  <label>Recorded Room Responses (multiple)</label><br />
+  <input type="file" id="recFiles" accept=".wav" multiple />
+
+  <br /><br />
+
+  <button id="processBtn" disabled>Estimate Impulse Response</button>
+</div>
+
+<div class="card">
+  <h2>2. Status</h2>
+  <pre id="log">Waiting for files...</pre>
+</div>
+
+<div class="card">
+  <h2>3. Impulse Response Waveform</h2>
+  <canvas id="waveform" width="800" height="200"></canvas>
+</div>
+
+<div class="note">
+  <strong>Note:</strong>  
+  File uploads and visualization run in the browser.  
+  Impulse response estimation is computed on a Python backend.
+</div>
+
+<script>
+/* ===============================
+   CONFIG
+================================ */
+const API_URL = "https://your-backend-url.onrender.com/process";
+
+/* ===============================
+   DOM ELEMENTS
+================================ */
+const refInput = document.getElementById("refFile");
+const recInput = document.getElementById("recFiles");
+const processBtn = document.getElementById("processBtn");
+const log = document.getElementById("log");
+
+/* ===============================
+   HELPERS
+================================ */
+function logMsg(msg) {
+  log.textContent += "\n" + msg;
+}
+
+function filesReady() {
+  return refInput.files.length === 1 && recInput.files.length > 0;
+}
+
+refInput.onchange = recInput.onchange = () => {
+  processBtn.disabled = !filesReady();
+};
+
+/* ===============================
+   WAVEFORM DRAWING
+================================ */
+function drawWaveform(samples) {
+  const canvas = document.getElementById("waveform");
+  const ctx = canvas.getContext("2d");
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = "#38bdf8";
+  ctx.lineWidth = 1;
+
+  const mid = canvas.height / 2;
+  const step = Math.ceil(samples.length / canvas.width);
+
+  ctx.beginPath();
+  for (let x = 0; x < canvas.width; x++) {
+    const start = x * step;
+    let min = 1, max = -1;
+
+    for (let i = 0; i < step && start + i < samples.length; i++) {
+      const v = samples[start + i];
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    ctx.moveTo(x, mid + min * mid);
+    ctx.lineTo(x, mid + max * mid);
+  }
+  ctx.stroke();
+}
+
+/* ===============================
+   PROCESS BUTTON
+================================ */
+processBtn.onclick = async () => {
+  log.textContent = "Uploading files to backend...";
+
+  const formData = new FormData();
+  formData.append("ref", refInput.files[0]);
+
+  for (const f of recInput.files) {
+    formData.append("recs", f);
+  }
+
+  try {
+    const response = await fetch(API_URL, {
+      method: "POST",
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error("Backend error");
+    }
+
+    const data = await response.json();
+
+    logMsg("Impulse response received");
+    logMsg(`Sample rate: ${data.fs} Hz`);
+    logMsg(`IR length displayed: ${data.impulse_response.length} samples`);
+
+    drawWaveform(new Float32Array(data.impulse_response));
+    logMsg("Done ✅");
+
+  } catch (err) {
+    logMsg("❌ Error communicating with backend");
+    console.error(err);
+  }
+};
+</script>
+
+</body>
+</html>
